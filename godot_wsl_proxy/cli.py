@@ -5,7 +5,12 @@ import click
 from godot_wsl_proxy.server import Application
 
 
-@click.command()
+@click.group()
+def cli() -> None:
+    pass
+
+
+@cli.command(name="serve")
 @click.option(
     "-h",
     "--lsp-host",
@@ -46,10 +51,44 @@ from godot_wsl_proxy.server import Application
     default=False,
     is_flag=True,
 )
-def cli(host: str, port: int, proxy_host: str, proxy_port: int, debug: bool) -> None:
+def serve(host: str, port: int, proxy_host: str, proxy_port: int, debug: bool) -> None:
     if debug:
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO)
     app = Application(lsp_host=host, lsp_port=port)
-    app.serve(host=proxy_host, port=proxy_port)
+    app.socket_server(host=proxy_host, port=proxy_port)
+
+
+@cli.command(name="run")
+@click.option(
+    "-h",
+    "--lsp-host",
+    "host",
+    default="127.0.0.1",
+    type=str,
+    envvar="GDScript_Host",
+)
+@click.option(
+    "-p",
+    "--lsp-port",
+    "port",
+    default=6005,
+    type=int,
+    envvar="GDScript_Port",
+)
+@click.option(
+    "-d",
+    "--debug",
+    "debug",
+    type=bool,
+    default=False,
+    is_flag=True,
+)
+def serve(host: str, port: int, debug: bool) -> None:
+    if debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+    app = Application(lsp_host=host, lsp_port=port)
+    app.stdin_server()

@@ -3,6 +3,7 @@ import logging
 import re
 import select
 import socket
+import sys
 
 logger = logging.getLogger("proxy")
 wsl_file_re = re.compile(r"['\"](\\/mnt\\/.+?)['\"]")
@@ -10,6 +11,71 @@ wsl_uri_re = re.compile(r"['\"](file:\\/\\/\\/mnt\\/.+?)['\"]")
 
 windows_uri_re = re.compile(r"['\"](file:///[A-Z]:/.+?)['\"]")
 windows_file_re = re.compile(r"['\"]([A-Z]:/.+?)['\"]")
+
+
+class SocketReader:
+    def __init__(self, reader: io.IOBase) -> None:
+        self._reader = reader
+
+    def read(self) -> str:
+        content_len = self._reader.readline().strip()
+        if not content_len.startswith(b"Content-Length: "):
+            raise ValueError("Something went wrong with a socket")
+        self._reader.readline()
+        number = content_len[16:]
+        size = int(number)
+        data = b""
+        while size > 0:
+            portion = self._reader.read(size)
+            size -= len(portion)
+            data += portion
+        logger.debug("RECEIVING REQUEST: %s\\r\\n\\r\\n%s", content_len, data)
+        return data.decode()
+
+
+class SocketWriter:
+    def __init__(self, writer: io.IOBase) -> None:
+        self._writer = writer
+
+    def write(self, data: str) -> None:
+        bin_data = data.encode()
+        length = len(bin_data)
+        full_data = b"Content-Length: " + str(length).encode() + b"\r\n\r\n" + bin_data
+        logger.debug("WRITING REQUEST: %s", full_data)
+        self._writer.write(full_data)
+        self._writer.flush()
+
+
+class StreamReader:
+    def __init__(self, stdin: io.TextIOBase) -> None:
+        self._stdin = stdin
+
+    def read(self) -> str:
+        content_len = self._stdin.readline().strip()
+        if not content_len.startswith("Content-Length: "):
+            raise ValueError("Something went wrong with a socket")
+        self._stdin.readline()
+        number = content_len[16:]
+        size = int(number)
+        data = ""
+        while size > 0:
+            portion = self._stdin.read(size)
+            size -= len(portion)
+            data += portion
+        logger.debug("STDIN REQUEST: %s", data)
+        return data
+
+
+class StreamWriter:
+    def __init__(self, stdout: io.TextIOBase) -> None:
+        self._stdout = stdout
+
+    def write(self, data: str) -> None:
+        length = len(data)
+        full_data = "Content-Length: " + str(length) + "\r\n\r\n" + data
+        logger.debug("STDOUT RESPONSE: %s", full_data)
+        self._stdout.write(full_data)
+        self._stdout.flush()
 
 
 def wsl_to_windows_uri(wsl_uri: str) -> str:
@@ -101,7 +167,7 @@ class Application:
             data = data.replace(source_text, target_text)
         return data
 
-    def serve(self, host: str, port: int) -> None:
+    def socket_server(self, host: str, port: int) -> None:
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_sock.bind((host, port))
@@ -110,16 +176,16 @@ class Application:
             while True:
                 client_sock, _client_addr = server_sock.accept()
                 proxy_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                operations = {}
                 try:
                     proxy_sock.connect((self._lsp_host, self._lsp_port))
                 except:
                     client_sock.close()
                     continue
-                client_reader = client_sock.makefile("rb", buffering=0)
-                client_writer = client_sock.makefile("wb", buffering=0)
-                proxy_reader = proxy_sock.makefile("rb", buffering=0)
-                proxy_writer = proxy_sock.makefile("wb", buffering=0)
+                client_reader = SocketReader(client_sock.makefile("rb", buffering=0))
+                client_writer = SocketWriter(client_sock.makefile("wb", buffering=0))
+                proxy_reader = SocketReader(proxy_sock.makefile("rb", buffering=0))
+                proxy_writer = SocketWriter(proxy_sock.makefile("wb", buffering=0))
+                operations = {}
                 operations[client_sock] = (client_reader, proxy_writer, self.handle_linux_to_windows)
                 operations[proxy_sock] = (proxy_reader, client_writer, self.handle_windows_to_linux)
                 inputs = list(operations.keys())
@@ -129,11 +195,11 @@ class Application:
                         for sock in rlist:
                             reader, writer, handler = operations[sock]
                             logger.debug("READING")
-                            data = read_full_data(reader)
+                            data - reader.read()
                             logger.debug("TRANSFORMING")
                             data = handler(data)
                             logger.debug("WRITING")
-                            write_full_data(writer, data)
+                            writer.write(data)
                 except ValueError:
                     pass
                 finally:
@@ -142,3 +208,34 @@ class Application:
                     proxy_sock.close()
         finally:
             server_sock.close()
+
+    def stdin_server(self) -> None:
+        proxy_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            proxy_sock.connect((self._lsp_host, self._lsp_port))
+        except:
+            sys.exit(1)
+        client_reader = StreamReader(sys.stdin)
+        client_writer = StreamWriter(sys.stdout)
+        proxy_reader = SocketReader(proxy_sock.makefile("rb", buffering=0))
+        proxy_writer = SocketWriter(proxy_sock.makefile("wb", buffering=0))
+        operations = {}
+        operations[sys.stdin] = (client_reader, proxy_writer, self.handle_linux_to_windows)
+        operations[proxy_sock] = (proxy_reader, client_writer, self.handle_windows_to_linux)
+        inputs = list(operations.keys())
+        try:
+            while True:
+                rlist, _wlist, _xlist = select.select(inputs, [], [])
+                for sock in rlist:
+                    reader, writer, handler = operations[sock]
+                    logger.debug("READING")
+                    data = reader.read()
+                    logger.debug("TRANSFORMING")
+                    data = handler(data)
+                    logger.debug("WRITING")
+                    writer.write(data)
+        except ValueError:
+            pass
+        finally:
+            logger.warning("CLOSING PROXY CONNECTION")
+            proxy_sock.close()
