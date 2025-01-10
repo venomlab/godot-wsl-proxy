@@ -23,3 +23,20 @@ pip install --user godot-wsl-proxy
 ```
 
 In future I plan to add this to Mason (for Neovim users)
+
+# Neovim LSP Config
+
+You can easily configure this via small customization of nvim-lspconfig
+
+```lua
+if os.getenv("WSL_DISTRO_NAME") ~= nil then -- Easy way to check if it is WSL or no
+    require("lspconfig").gdscript.setup({
+        on_attach = on_attach,              -- Your buffer on_attach function
+        cmd = { "godot-wsl-proxy", "run" },
+    })
+else
+    require("lspconfig").gdscript.setup({
+        on_attach = on_attach, -- Your buffer on_attach function
+    })
+end
+```
