@@ -3,3 +3,4 @@ __pycached__
 .venv
 .repo_project
 .mypy_cache
+/dist/
