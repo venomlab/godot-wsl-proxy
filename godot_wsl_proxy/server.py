@@ -71,7 +71,7 @@ class StreamWriter:
         self._stdout = stdout
 
     def write(self, data: str) -> None:
-        length = len(data)
+        length = len(data.encode())
         full_data = "Content-Length: " + str(length) + "\r\n\r\n" + data
         logger.debug("STDOUT RESPONSE: %s", full_data)
         self._stdout.write(full_data)

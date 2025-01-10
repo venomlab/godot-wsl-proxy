@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "godot-wsl-proxy"
-version = "0.2.0"
+version = "0.2.1"
 description = "LSP proxy to work from editor located in WSL and Godot located in Windows seemlessly"
 license = "MIT"
 repository = "https://github.com/venomlab/godot-wsl-proxy"
